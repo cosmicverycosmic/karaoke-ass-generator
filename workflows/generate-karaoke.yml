@@ -1,0 +1,60 @@
+name: Generate Karaoke ASS
+
+on:
+  workflow_dispatch:
+    inputs:
+      audio_file:
+        description: 'Audio file name (e.g. song.mp3)'
+        default: song.mp3
+        required: true
+      lyrics_file:
+        description: 'Lyrics file name (e.g. lyrics.txt)'
+        default: lyrics.txt
+        required: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install lameenc  # for mp3 output from demucs if needed
+
+      - name: Download aegisub-cli
+        run: |
+          wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/latest/download/aegisub-cli-linux-x64.zip
+          unzip aegisub-cli.zip
+          chmod +x aegisub-cli-linux-x64
+
+      - name: Separate vocals with Demucs
+        run: |
+          python -c "from demucs.pretrained import get_model; from demucs.apply import apply_model; import torch; model = get_model('htdemucs'); model.cpu(); audio, sr = torch.load('separated/htdemucs/${{ inputs.audio_file }}/vocals.pt') if Path('separated').exists() else apply_model(model, torch.audio.load('${{ inputs.audio_file }}')[0][None], device='cpu', progress=True, num_workers=2)[0]; torch.save(audio, 'vocals.wav')"
+
+      # Fallback simple demucs cli if the python way fails
+      - name: Fallback Demucs CLI
+        if: failure()
+        run: |
+          python -m demucs.separate --two-stems=vocals -n htdemucs ${{ inputs.audio_file }}
+          mv separated/htdemucs/${{ inputs.audio_file }}/vocals.wav vocals.wav
+
+      - name: Generate pre-template ASS
+        run: |
+          python generate_ass.py vocals.wav ${{ inputs.lyrics_file }} pre.ass
+
+      - name: Apply Karaoke Templater (fancy FX)
+        run: |
+          ./aegisub-cli-linux-x64 pre.ass final.ass "Karaoke Templater" || true   # some versions exit 1 even on success
+
+      - name: Upload final karaoke ASS
+        uses: actions/upload-artifact@v4
+        with:
+          name: karaoke-ass
+          path: final.ass
