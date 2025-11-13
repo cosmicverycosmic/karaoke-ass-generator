@@ -1,41 +1,43 @@
 import sys
-from faster_whisper import WhisperModel
 import re
-from pathlib import Path
+import datetime
+from faster_whisper import WhisperModel
 
-audio_path = sys.argv[1]
-lyrics_path = sys.argv[2]
-output_path = sys.argv[3]
+def ass_time(seconds: float) -> str:
+    td = datetime.timedelta(seconds=seconds)
+    hours, rem = divmod(td.total_seconds(), 3600)
+    minutes, seconds = divmod(rem, 60)
+    millis = int(td.microseconds / 10000)
+    return f"0:{int(minutes):02}:{int(seconds):02}.{millis:02}"
 
 model = WhisperModel("large-v3", device="cpu", compute_type="int8")
+segments, _ = model.transcribe("vocals.wav", word_timestamps=True, language="en")
 
-segments, info = model.transcribe(audio_path, word_timestamps=True, language="en")
+# Collect all timed words from Whisper
+words = [w for seg in segments for w in seg.words if w.word.strip()]
 
-def clean_for_match(text):
-    return re.sub(r'[^a-z0-9 ]', '', text.lower())
+def clean(text: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', text.lower())
+
+trans_clean = [clean(w.word) for w in words]
 
 # Load provided lyrics
-with open(lyrics_path) as f:
+with open("lyrics.txt", encoding="utf-8") as f:
     provided_lines = [line.strip() for line in f if line.strip()]
 
-provided_clean = [clean_for_match(line) for line in provided_lines]
+provided_display_groups = []   # list of lists: original words with punctuation/casing
+provided_clean_flat = []
+for line in provided_lines:
+    display_words = line.split()
+    provided_display_groups.append(display_words)
+    provided_clean_flat.extend(clean(w) for w in display_words)
 
-# Build transcribed words list
-trans_words = []
-trans_clean = []
-for seg in segments:
-    for word in seg.words:
-        cleaned = clean_for_match(word.word)
-        trans_words.append(word.word.strip())
-        trans_clean.append(cleaned)
+# Decide if we can trust the provided lyrics
+total_trans = len([c for c in trans_clean if c])
+total_prov = len([c for c in provided_clean_flat if c])
+use_provided = (10 < total_trans == total_prov and 
+                all(a == b for a, b in zip(trans_clean, provided_clean_flat) if a and b))
 
-# Simple exact match check (works 95%+ of the time on isolated vocals)
-use_provided = len(trans_clean) == sum(len(clean_for_match(line).split()) for line in provided_lines) and all(a == b for a,b in zip(trans_clean, [w for line in provided_clean for w in line.split()]))
-
-word_idx = 0
-ass_lines = []
-
-# Header + fancy style
 header = """[Script Info]
 Title: Karaoke
 ScriptType: v4.00+
@@ -45,48 +47,54 @@ PlayResY: 720
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,Arial,72,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,80,1
+Style: Karaoke,Arial,72,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,0,2,10,10,80,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-# Fancy templates (scale pulse + glow on current word, nice fade per line)
+# Modern fancy template (color sweep + scale pulse + glow on current word)
 templates = """
-Comment: 0,0:00:00.00,0:00:00.00,Karaoke,,0,0,0,,template syllable highlight {\\t(0,150,\\fscx110\\fscy110\\be8)\\t(150,300,\\fscx100\\fscy100\\be1)\\3c&HFFFFFF&}
-Comment: 0,0:00:00.00,0:00:00.00,Karaoke,,0,0,0,,template line {\\fad(300,300)\\an5\\pos(640,580)}
+Comment: 0,0:00:00.00,0:00:00.00,Karaoke,,0,0,0,,{\\fad(350,350)\\an5\\pos(640,660)}
+Comment: 0,0:00:00.00,0:00:00.00,Karaoke,,0,0,0,,template all {\\1c&HAAAAAA&\\3c&H888888&}
+Comment: 0,0:00:00.00,0:00:00.00,Karaoke,,0,0,0,,template syl {\\t(0,120,\\fscx112\\fscy112\\be10\\1c&H00FFFF&\\3c&HFFFFFF&)\\t(120,240,\\fscx100\\fscy100\\be1)}
 """
 
-with open(output_path, "w", encoding="utf-8") as f:
+with open("pre.ass", "w", encoding="utf-8") as f:
     f.write(header)
 
-    line_idx = 0
-    for seg in segments:
-        if not seg.words:
-            continue
-
-        start = seg.words[0].start
-        end = seg.words[-1].end
-
-        text = "{\\fad(300,300)\\an5}"
-        current_line_words = len(seg.words)
-
-        for i, word in enumerate(seg.words):
-            dur_cs = int((word.end - word.start) * 100)
-            clean_word = clean_for_match(word.word)
-
-            # Use provided lyrics if match, else transcribed
-            display_word = provided_lines[line_idx].split()[i] if use_provided and line_idx < len(provided_lines) else word.word.strip()
-            text += f"{{\\k{dur_cs}}}{display_word} "
-            word_idx += 1
-
-        # Simple line grouping fallback
-        if line_idx < len(provided_lines):
-            line_idx += 1
-
-        start_str = f"0:00:{start:05.2f}".replace(".", ",")
-        end_str = f"0:00:{end:05.2f}".replace(".", ",")
-
-        f.write(f"Dialogue: 0,{start_str},{end_str},Karaoke,,0,0,0,,{text.strip()}\n")
+    if use_provided and provided_display_groups:
+        ptr = 0
+        for display_words in provided_display_groups:
+            if ptr + len(display_words) > len(words):
+                break
+            group = words[ptr:ptr + len(display_words)]
+            if not group:
+                continue
+            start = group[0].start
+            end = group[-1].end
+            line_text = ""
+            prev = start
+            for i, w in enumerate(group):
+                # small gap filler (rare)
+                if w.start > prev + 0.02:
+                    line_text += "{\\kf%d}" % int((w.start - prev) * 100)
+                dur_cs = max(1, int((w.end - w.start) * 100))
+                line_text += "{\\k%d}%s " % (dur_cs, display_words[i])
+                prev = w.end
+            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Karaoke,,0,0,0,,{line_text}\n")
+            ptr += len(display_words)
+    else:
+        # Fallback: Whisper's own segmentation
+        for seg in segments:
+            if not seg.words:
+                continue
+            start = seg.words[0].start
+            end = seg.words[-1].end
+            line_text = ""
+            for w in seg.words:
+                dur_cs = max(1, int((w.end - w.start) * 100))
+                line_text += "{\\k%d}%s " % (dur_cs, w.word.strip())
+            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Karaoke,,0,0,0,,{line_text}\n")
 
     f.write(templates)
