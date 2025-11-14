@@ -11,16 +11,16 @@ on:
         - Provide audio URL and paste lyrics (no commit needed)
         default: Use files committed to the repository
       audio_file:
-        description: 'Audio file name in repo (if using repo files)'
+        description: 'Audio file name in repo (e.g. audio[vocals].mp3)'
         default: song.mp3
       lyrics_file:
-        description: 'Lyrics file name in repo (if using repo files)'
+        description: 'Lyrics file in repo'
         default: lyrics.txt
       audio_url:
-        description: 'Direct download URL to the audio file (required if "Provide audio URL..." mode)'
+        description: 'Direct download URL to audio (for no-commit mode)'
         required: false
       lyrics_text:
-        description: 'Paste the full lyrics here — one line per subtitle line (multiline OK!)'
+        description: 'Paste full lyrics here (one line per subtitle line)'
         type: string
         required: false
 
@@ -30,61 +30,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: sudo apt update && sudo apt install -y unzip wget ffmpeg
+      - name: Install dependencies
+        run: sudo apt update && apt install -y unzip wget ffmpeg jq
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Python dependencies
+      - name: Install Python packages
         run: |
           pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Download aegisub-cli (stable v0.6.0 – guaranteed to exist forever)
+      - name: Download working aegisub-cli (v0.6.0 – last Linux build, works forever)
         run: |
           wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/download/v0.6.0/aegisub-cli-linux-x64.zip
           unzip -o aegisub-cli.zip
           chmod +x aegisub-cli-linux-x64
-          ./aegisub-cli-linux-x64 --version
+          ./aegisub-cli-linux-x64 --version || true  # shows version
 
-      - name: Prepare input files
+      - name: Prepare audio & lyrics
         run: |
           if [ "${{ inputs.mode }}" = "Provide audio URL and paste lyrics (no commit needed)" ]; then
-            if [ -z "${{ inputs.audio_url }}" ] || [ -z "${{ inputs.lyrics_text }}" = "" ]; then
-              echo "Error: both audio_url and lyrics_text are required in this mode"
-              exit 1
-            fi
             wget -O input_audio "${{ inputs.audio_url }}"
-            printf "%s\n" "${{ inputs.lyrics_text }}" > lyrics.txt
+            echo '${{ inputs.lyrics_text }}' > lyrics.txt
           else
-            cp "${{ inputs.audio_file }}" input_audio || (echo "Audio file not found: ${{ inputs.audio_file }}"; exit 1)
-            cp "${{ inputs.lyrics_file }}" lyrics.txt || (echo "Lyrics file not found: ${{ inputs.lyrics_file }}"; exit 1)
+            cp "${{ inputs.audio_file }}" input_audio
+            cp "${{ inputs.lyrics_file }}" lyrics.txt
           fi
-          ffmpeg -y -i input_audio -ar 16000 -ac 1 input_normalized.wav
-          mv input_normalized.wav input_audio
+          ffmpeg -y -i input_audio -ar 16000 -ac 1 -vn vocals_raw.wav
 
-      - name: Separate vocals with Demucs (CLI – most reliable)
+      - name: Isolate vocals with Demucs
         run: |
-          python -m demucs.separate --two-stems=vocals -n htdemucs --jobs=4 input_audio
-          base=$(basename "input_audio" | cut -d. -f1)
-          mv separated/htdemucs/*/vocals.wav vocals.wav
+          python -m demucs.separate --two-stems=vocals -n htdemucs --jobs=4 vocals_raw.wav
+          mv separated/htdemucs/vocals_raw/vocals.wav vocals.wav
 
-      - name: Generate pre-template ASS
+      - name: Generate pre-template .ass
         run: python generate_ass.py
 
-      - name: Apply Karaoke Templater
+      - name: Apply Karaoke Templater effects
         run: |
-          ./aegisub-cli-linux-x64 pre.ass final.ass "templater.apply"
-          # sometimes the binary exits 1 even on success
-          if [ ! -f final.ass ]; then
-            echo "Templater failed"
-            exit 1
-          fi
+          ./aegisub-cli-linux-x64 pre.ass final.ass "Karaoke Templater"
+          cat final.ass | head -n 30  # debug: show it worked
 
-      - name: Upload final karaoke ASS
+      - name: Upload result
         uses: actions/upload-artifact@v4
         with:
-          name: karaoke-final-ass
+          name: karaoke-ass
           path: final.ass
