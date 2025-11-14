@@ -42,7 +42,7 @@ jobs:
         run: |
           pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Download aegisub-cli v0.6.0 (the last working Linux build — permanent URL)
+      - name: Download aegisub-cli v0.6.0 (last working Linux build – permanent link)
         run: |
           wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/download/v0.6.0/aegisub-cli-linux-x64.zip
           unzip -o aegisub-cli.zip
@@ -52,7 +52,7 @@ jobs:
       - name: Prepare audio & lyrics
         run: |
           if [ "${{ inputs.mode }}" = "Provide audio URL and paste lyrics (no commit needed)" ]; then
-            wget -O input_audio "${{ inputs.audio_url }}"
+            wget -O "input_audio" "${{ inputs.audio_url }}"
             echo '${{ inputs.lyrics_text }}' > lyrics.txt
           else
             cp "${{ inputs.audio_file }}" input_audio
@@ -63,18 +63,18 @@ jobs:
       - name: Isolate vocals with Demucs
         run: |
           python -m demucs.separate --two-stems=vocals -n htdemucs --jobs=4 normalized.wav
-          mv separated/htdemucs/normalized/vocals.wav vocals.wav
+          mv separated/htdemucs/normalized/vocals.wav vocals.wav || mv separated/htdemucs/*/vocals.wav vocals.wav
 
-      - name: Generate pre-template .ass (word-level + \k tags)
+      - name: Generate pre-template .ass
         run: python generate_ass.py
 
-      - name: Apply classic Karaoke Templater effects
+      - name: Apply Karaoke Templater (classic effects)
         run: |
           ./aegisub-cli-linux-x64 pre.ass final.ass "Karaoke Templater"
-          # v0.6.0 sometimes exits 1 even on success — ignore if file exists
-          if [ -f final.ass ]; then echo "Success!"; else echo "Templater failed"; exit 1; fi
+          # v0.6.0 sometimes exits 1 even on success
+          [ -f final.ass ] && echo "Templater succeeded!" || (echo "Failed"; exit 1)
 
-      - name: Upload final karaoke ASS
+      - name: Upload result
         uses: actions/upload-artifact@v4
         with:
           name: karaoke-final-ass
