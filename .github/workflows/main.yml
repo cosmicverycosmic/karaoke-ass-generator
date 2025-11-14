@@ -40,14 +40,7 @@ jobs:
 
       - name: Install Python packages
         run: |
-          pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
-
-      - name: Download aegisub-cli v0.6.0 (last working Linux build – permanent link)
-        run: |
-          wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/download/v0.6.0/aegisub-cli-linux-x64.zip
-          unzip -o aegisub-cli.zip
-          chmod +x aegisub-cli-linux-x64
-          ./aegisub-cli-linux-x64 --version
+          pip install faster-whisper==1.0.3 demucs pyonfx torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Prepare audio & lyrics
         run: |
@@ -68,11 +61,8 @@ jobs:
       - name: Generate pre-template .ass
         run: python generate_ass.py
 
-      - name: Apply Karaoke Templater (classic effects)
-        run: |
-          ./aegisub-cli-linux-x64 pre.ass final.ass "Karaoke Templater"
-          # v0.6.0 sometimes exits 1 even on success
-          [ -f final.ass ] && echo "Templater succeeded!" || (echo "Failed"; exit 1)
+      - name: Apply PyonFX effects
+        run: python apply_fx.py
 
       - name: Upload result
         uses: actions/upload-artifact@v4
