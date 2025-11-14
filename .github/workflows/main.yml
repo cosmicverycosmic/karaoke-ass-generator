@@ -31,10 +31,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        run: sudo apt update && sudo apt install -y unzip wget jq
+        run: sudo apt update && sudo apt install -y unzip wget ffmpeg
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -42,38 +42,48 @@ jobs:
         run: |
           pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Download aegisub-cli (stable v0.6.0 – never breaks)
+      - name: Download aegisub-cli (stable v0.6.0 – guaranteed to exist forever)
         run: |
           wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/download/v0.6.0/aegisub-cli-linux-x64.zip
-          unzip aegisub-cli.zip
+          unzip -o aegisub-cli.zip
           chmod +x aegisub-cli-linux-x64
-          ./aegisub-cli-linux-x64 --version  # confirms it works
+          ./aegisub-cli-linux-x64 --version
 
       - name: Prepare input files
         run: |
           if [ "${{ inputs.mode }}" = "Provide audio URL and paste lyrics (no commit needed)" ]; then
-            if [ -z "${{ inputs.audio_url }}" ]; then echo "Error: audio_url is required in this mode"; exit 1; fi
-            if [ -z "${{ inputs.lyrics_text }}" ]; then echo "Error: lyrics_text is required in this mode"; exit 1; fi
+            if [ -z "${{ inputs.audio_url }}" ] || [ -z "${{ inputs.lyrics_text }}" = "" ]; then
+              echo "Error: both audio_url and lyrics_text are required in this mode"
+              exit 1
+            fi
             wget -O input_audio "${{ inputs.audio_url }}"
             printf "%s\n" "${{ inputs.lyrics_text }}" > lyrics.txt
           else
             cp "${{ inputs.audio_file }}" input_audio || (echo "Audio file not found: ${{ inputs.audio_file }}"; exit 1)
             cp "${{ inputs.lyrics_file }}" lyrics.txt || (echo "Lyrics file not found: ${{ inputs.lyrics_file }}"; exit 1)
           fi
+          ffmpeg -y -i input_audio -ar 16000 -ac 1 input_normalized.wav
+          mv input_normalized.wav input_audio
 
-      - name: Separate vocals with Demucs
+      - name: Separate vocals with Demucs (CLI – most reliable)
         run: |
-          python -m demucs.separate -n htdemucs --two-stems=vocals --jobs=4 input_audio
-          base=$(basename "input_audio")
-          mv "separated/htdemucs/${base}/vocals.wav" vocals.wav
+          python -m demucs.separate --two-stems=vocals -n htdemucs --jobs=4 input_audio
+          base=$(basename "input_audio" | cut -d. -f1)
+          mv separated/htdemucs/*/vocals.wav vocals.wav
 
-      - name: Generate pre-template ASS (word-level, singing-aware)
+      - name: Generate pre-template ASS
         run: python generate_ass.py
 
-      - name: Apply Karaoke Templater (fancy modern effects)
-        run: ./aegisub-cli-linux-x64 pre.ass final.ass || true
+      - name: Apply Karaoke Templater
+        run: |
+          ./aegisub-cli-linux-x64 pre.ass final.ass "templater.apply"
+          # sometimes the binary exits 1 even on success
+          if [ ! -f final.ass ]; then
+            echo "Templater failed"
+            exit 1
+          fi
 
-      - name: Upload result
+      - name: Upload final karaoke ASS
         uses: actions/upload-artifact@v4
         with:
           name: karaoke-final-ass
