@@ -1,0 +1,79 @@
+name: Generate Karaoke ASS
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'How to provide song and lyrics'
+        type: choice
+        options:
+        - Use files committed to the repository
+        - Provide audio URL and paste lyrics (no commit needed)
+        default: Use files committed to the repository
+      audio_file:
+        description: 'Audio file name in repo (if using repo files)'
+        default: song.mp3
+      lyrics_file:
+        description: 'Lyrics file name in repo (if using repo files)'
+        default: lyrics.txt
+      audio_url:
+        description: 'Direct download URL to the audio file (required if "Provide audio URL..." mode)'
+        required: false
+      lyrics_text:
+        description: 'Paste the full lyrics here — one line per subtitle line (multiline OK!)'
+        type: string
+        required: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt update && sudo apt install -y unzip wget
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Download aegisub-cli (latest)
+        run: |
+          wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/latest/download/aegisub-cli-linux-x64.zip
+          unzip aegisub-cli.zip
+          chmod +x aegisub-cli-linux-x64
+
+      - name: Prepare input files
+        run: |
+          if [ "${{ inputs.mode }}" = "Provide audio URL and paste lyrics (no commit needed)" ]; then
+            if [ -z "${{ inputs.audio_url }}" ]; then echo "Error: audio_url is required in this mode"; exit 1; fi
+            if [ -z "${{ inputs.lyrics_text }}" ]; then echo "Error: lyrics_text is required in this mode"; exit 1; fi
+            wget -O input_audio "${{ inputs.audio_url }}"
+            printf "%s\n" "${{ inputs.lyrics_text }}" > lyrics.txt
+          else
+            cp "${{ inputs.audio_file }}" input_audio || (echo "Audio file not found: ${{ inputs.audio_file }}"; exit 1)
+            cp "${{ inputs.lyrics_file }}" lyrics.txt || (echo "Lyrics file not found: ${{ inputs.lyrics_file }}"; exit 1)
+          fi
+
+      - name: Separate vocals with Demucs
+        run: |
+          python -m demucs.separate -n htdemucs --two-stems=vocals --jobs=4 input_audio
+          base=$(basename "input_audio")
+          mv "separated/htdemucs/${base}/vocals.wav" vocals.wav
+
+      - name: Generate pre-template ASS (word-level, singing-aware)
+        run: python generate_ass.py
+
+      - name: Apply Karaoke Templater (fancy modern effects)
+        run: ./aegisub-cli-linux-x64 pre.ass final.ass || true
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: karaoke-final-ass
+          path: final.ass
