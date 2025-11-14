@@ -33,7 +33,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg wget unzip libcairo2-dev pkg-config
+          sudo apt install -y \
+            ffmpeg wget unzip \
+            libcairo2-dev pkg-config \
+            libgirepository1.0-dev gobject-introspection \
+            libglib2.0-dev
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,7 +46,12 @@ jobs:
 
       - name: Install Python packages
         run: |
-          pip install faster-whisper==1.0.3 demucs pyonfx torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install \
+            faster-whisper==1.0.3 \
+            demucs \
+            pyonfx \
+            torch torchvision torchaudio \
+            --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Prepare audio & lyrics
         run: |
