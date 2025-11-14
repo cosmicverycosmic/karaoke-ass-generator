@@ -30,8 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: sudo apt update && sudo apt install -y ffmpeg wget unzip
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg wget unzip libcairo2-dev pkg-config
 
       - name: Set up Python
         uses: actions/setup-python@v5
