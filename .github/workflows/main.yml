@@ -42,38 +42,12 @@ jobs:
         run: |
           pip install faster-whisper==1.0.3 demucs torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Download aegisub-cli (dynamic, works forever)
+      - name: Download aegisub-cli (stable v0.6.0 – never breaks)
         run: |
-          # Get latest release info
-          curl -s https://api.github.com/repos/Myaamori/aegisub-cli/releases/latest -o release.json
-      
-          # Find the Linux x64/amd64 asset (matches any naming like aegisub-cli-v1.2.3-linux-x64.zip, aegisub-cli_linux_amd64, etc.)
-          DOWNLOAD_URL=$(jq -r '.assets[].browser_download_url | select(test("linux.*(x64|amd64|x86_64)"; "i"))' release.json | head -n1)
-      
-          # Fallback to a known-good older release if the latest has no Linux build (unlikely but safe)
-          if [ -z "$DOWNLOAD_URL" ]; then
-            echo "No Linux asset in latest release — falling back to known good v0.6.0"
-            DOWNLOAD_URL="https://github.com/Myaamori/aegisub-cli/releases/download/v0.6.0/aegisub-cli-linux-x64.zip"
-          fi
-      
-          echo "Downloading aegisub-cli from: $DOWNLOAD_URL"
-          wget -O aegisub-cli.download "$DOWNLOAD_URL"
-      
-          # Handle both zip and raw binary uploads
-          if unzip -t aegisub-cli.download >/dev/null 2>&1; then
-            unzip -o aegisub-cli.download
-            rm aegisub-cli.download
-            # Rename whatever binary came out to the name the workflow expects
-            EXTRACTED_BINARY=$(find . -type f -executable -name "*aegisub-cli*" | head -n1 || echo "")
-            if [ -n "$EXTRACTED_BINARY" ]; then
-              mv "$EXTRACTED_BINARY" aegisub-cli-linux-x64
-            fi
-          else
-            mv aegisub-cli.download aegisub-cli-linux-x64
-          fi
-      
+          wget -O aegisub-cli.zip https://github.com/Myaamori/aegisub-cli/releases/download/v0.6.0/aegisub-cli-linux-x64.zip
+          unzip aegisub-cli.zip
           chmod +x aegisub-cli-linux-x64
-          ls -la aegisub-cli-linux-x64
+          ./aegisub-cli-linux-x64 --version  # confirms it works
 
       - name: Prepare input files
         run: |
